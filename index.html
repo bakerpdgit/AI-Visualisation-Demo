@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cat or Alligator? Inside an AI</title>
+  <meta name="description" content="Hold a picture up to the webcam and watch a neural network decide, layer by layer, whether it's a cat or an alligator.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0e17'/%3E%3Crect x='5' y='5' width='10' height='10' fill='%23ff9f1c'/%3E%3Crect x='17' y='17' width='10' height='10' fill='%232dd4bf'/%3E%3Crect x='17' y='5' width='10' height='10' fill='%238b7cf6'/%3E%3Crect x='5' y='17' width='10' height='10' fill='%238b7cf6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/tf.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Cat or alligator?</h1>
+      <p>Watch an AI make up its mind, layer by layer</p>
+    </div>
+    <nav class="controls" aria-label="Controls">
+      <button id="btn-freeze" class="btn" title="Freeze the picture (Space)"><span class="kbd">Space</span> <span class="lbl">Freeze</span></button>
+      <button id="btn-photo" class="btn" title="Use a photo instead of the camera (P)">Use a photo</button>
+      <button id="btn-info" class="btn" title="How it works (I)">How it works</button>
+      <button id="btn-settings" class="btn icon" title="Settings (S)" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm7.43-2.53a7.8 7.8 0 0 0 0-1.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.4 7.4 0 0 0-1.68-.97l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.6.24-1.17.57-1.68.97l-2.39-.96a.5.5 0 0 0-.61.22L2.82 8.3a.5.5 0 0 0 .12.64l2.03 1.58a7.8 7.8 0 0 0 0 1.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.61.22l2.39-.96c.51.4 1.08.73 1.68.97l.36 2.54c.05.24.26.42.5.42h3.84c.25 0 .45-.18.5-.42l.36-2.54c.6-.24 1.17-.57 1.68-.97l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg>
+      </button>
+      <button id="btn-full" class="btn icon" title="Full screen (F)" aria-label="Full screen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5v2H6v3H4Zm10-5h6v5h-2V6h-4V4ZM6 15v3h3v2H4v-5h2Zm12 0h2v5h-5v-2h3v-3Z"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <!-- 1. Camera -->
+    <section class="panel camera-panel" aria-labelledby="h-camera">
+      <h2 id="h-camera"><span class="step">1</span> What it sees</h2>
+      <div class="cam-view" id="cam-view">
+        <video id="video" playsinline muted></video>
+        <img id="still" alt="" hidden>
+        <canvas id="cam-overlay"></canvas>
+        <div class="cam-badge" id="frozen-badge" hidden>Frozen. Press Space to carry on.</div>
+        <div class="cam-prompt" id="cam-prompt" hidden>Hold up a picture of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b>!</div>
+        <div class="cam-message" id="cam-message" hidden></div>
+      </div>
+      <p class="note">The AI only looks <b>inside the box</b>, shrunk down to 224 × 224 pixels.</p>
+      <label class="switch"><input type="checkbox" id="chk-heat" checked> <span>Show where it found evidence</span></label>
+      <div class="photo-bar" id="photo-bar" hidden>
+        <button class="btn small" id="btn-back-camera">Back to the camera</button>
+      </div>
+      <div class="howto">
+        <h3>How to play</h3>
+        <ol>
+          <li>Hold a picture of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b> inside the box.</li>
+          <li>Keep it still. Watch the layers from left to right.</li>
+          <li>Press <span class="kbd">Space</span> to freeze it and look closely.</li>
+        </ol>
+        <p><b>Challenge:</b> can you fool it? Try a toy, a cartoon, a lion or a lizard.</p>
+      </div>
+    </section>
+
+    <!-- 2. The layers -->
+    <section class="panel pipeline-panel" aria-labelledby="h-layers">
+      <div class="pipeline-head">
+        <h2 id="h-layers"><span class="step">2</span> Inside the network <span class="dim">(5 of its 50 layers)</span></h2>
+        <div class="seg" role="radiogroup" aria-label="Which detectors to show" id="seg-mode">
+          <button role="radio" data-mode="important" aria-checked="true">Most important</button>
+          <button role="radio" data-mode="active" aria-checked="false">Most active</button>
+        </div>
+      </div>
+      <div class="pipeline" id="pipeline"></div>
+      <div class="legend">
+        <span class="lg"><i class="sw ice"></i> Brighter = detector firing more</span>
+        <span class="lg"><i class="sw cat"></i> Pushes towards <b class="c-cat">cat</b></span>
+        <span class="lg"><i class="sw gator"></i> Pushes towards <b class="c-gator">alligator</b></span>
+        <span class="lg hint">Click a layer to see more of its detectors</span>
+      </div>
+    </section>
+
+    <!-- 3. The answer -->
+    <section class="panel verdict-panel" aria-labelledby="h-verdict">
+      <h2 id="h-verdict"><span class="step">3</span> Its answer</h2>
+      <div class="verdict" id="verdict" data-kind="none">
+        <div class="verdict-word" id="verdict-word">…</div>
+        <div class="verdict-sub" id="verdict-sub">Warming up</div>
+      </div>
+      <div class="split" aria-label="How sure it is">
+        <div class="split-bar"><i class="seg-cat" id="bar-cat"></i><i class="seg-gator" id="bar-gator"></i><i class="seg-other" id="bar-other"></i></div>
+        <div class="split-labels">
+          <span><i class="sw cat"></i> Cat <b id="pct-cat">0%</b></span>
+          <span><i class="sw gator"></i> Alligator <b id="pct-gator">0%</b></span>
+          <span><i class="sw other"></i> Something else <b id="pct-other">0%</b></span>
+        </div>
+      </div>
+      <h3 class="sub-h">How the votes built up, layer by layer</h3>
+      <div class="buildup-wrap">
+        <div class="bu-axis"><span class="c-cat">cat</span><span class="c-gator">alligator</span></div>
+        <div class="buildup" id="buildup" aria-label="Vote balance at each layer"></div>
+      </div>
+      <h3 class="sub-h">Its top guesses <span class="dim">(out of 1,000 things it knows)</span></h3>
+      <ol class="top5" id="top5"></ol>
+    </section>
+  </main>
+
+  <footer class="explainer">
+    <div class="idea"><b>1</b><p><strong>Each layer is a team of detectors.</strong> Every detector hunts for one pattern and lights up wherever it finds it.</p></div>
+    <div class="idea"><b>2</b><p><strong>Simple → complex.</strong> Early layers find edges and colours. Later layers combine those into textures, then parts, then whole animals.</p></div>
+    <div class="idea"><b>3</b><p><strong>Detectors vote.</strong> Early on the votes are mixed, because edges and colours don't tell you much. By the last layer they mostly agree, and they're added up to give the answer.</p></div>
+  </footer>
+
+  <!-- Loading / start-up -->
+  <div class="overlay" id="loading">
+    <div class="card loading-card">
+      <h2>Cat or alligator?</h2>
+      <p id="loading-text">Loading the AI…</p>
+      <div class="progress"><i id="loading-bar"></i></div>
+      <p class="small dim" id="loading-detail">About 9 MB. Everything runs on this computer, and no pictures are uploaded.</p>
+      <div class="loading-actions" id="loading-actions" hidden></div>
+    </div>
+  </div>
+
+  <!-- Layer detail -->
+  <dialog class="modal wide" id="dlg-layer">
+    <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
+    <div class="layer-detail">
+      <div class="ld-left">
+        <p class="eyebrow" id="ld-eyebrow">Layer</p>
+        <h2 id="ld-title">Layer</h2>
+        <p id="ld-meta" class="dim"></p>
+        <div class="ld-grid" id="ld-grid"></div>
+      </div>
+      <div class="ld-right">
+        <h3>Detector spotlight</h3>
+        <canvas id="ld-spot" width="448" height="448"></canvas>
+        <p id="ld-spot-text" class="spot-text">Click any detector to see exactly where in the picture it's firing.</p>
+        <div class="ld-mini"><canvas id="ld-spot-raw"></canvas><p class="small dim">What the detector itself outputs: a grid of numbers, shown here as brightness.</p></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Photo picker -->
+  <dialog class="modal" id="dlg-photo">
+    <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
+    <h2>Use a photo</h2>
+    <p>Try one of these, choose your own file, or drag a picture onto the page.</p>
+    <div class="samples" id="samples"></div>
+    <div class="photo-actions">
+      <label class="btn primary file-btn">Choose a file… <input type="file" id="file-input" accept="image/*" hidden></label>
+      <button class="btn" id="btn-photo-camera">Back to the camera</button>
+    </div>
+    <p class="small dim">Sample photos: public domain or CC0, via Wikimedia Commons (see <code>samples/CREDITS.md</code>).</p>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog class="modal" id="dlg-settings">
+    <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
+    <h2>Settings</h2>
+    <div class="form">
+      <label>Camera <select id="set-camera"><option value="">Default camera</option></select></label>
+      <label class="row"><input type="checkbox" id="set-mirror"> Mirror the camera (like a mirror)</label>
+      <label>Size of the box <input type="range" id="set-zoom" min="0.4" max="1" step="0.05"> <output id="out-zoom"></output></label>
+      <label>"Not sure" threshold <input type="range" id="set-none" min="0.02" max="0.5" step="0.01"> <output id="out-none"></output>
+        <span class="small dim">If cat + alligator together score less than this, it says it isn't sure.</span></label>
+      <label>Explaining speed
+        <select id="set-grad">
+          <option value="auto">Automatic (recommended)</option>
+          <option value="every">Every frame (needs a good graphics card)</option>
+          <option value="half">Every other frame</option>
+          <option value="quarter">Every fourth frame (slow computers)</option>
+        </select></label>
+      <label class="row"><input type="checkbox" id="set-stats"> Show speed stats (D)</label>
+      <div class="row gap"><button class="btn" id="set-reset">Reset settings</button></div>
+      <p class="small dim">Keys: <span class="kbd">Space</span> freeze · <span class="kbd">F</span> full screen · <span class="kbd">H</span> heat map · <span class="kbd">M</span> mirror · <span class="kbd">P</span> photo · <span class="kbd">1</span>–<span class="kbd">5</span> open a layer · <span class="kbd">I</span> info · <span class="kbd">Esc</span> close</p>
+    </div>
+  </dialog>
+
+  <!-- How it works -->
+  <dialog class="modal wide" id="dlg-info">
+    <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
+    <div class="info">
+      <h2>How does it work?</h2>
+      <div class="info-cols">
+        <section>
+          <h3>What is this AI?</h3>
+          <p>It's a <b>convolutional neural network</b> called EfficientNet-Lite0, designed by Google. It has <b>50 layers</b> and about <b>4.6 million</b> adjustable numbers (called <i>weights</i>). It was trained on 1.28 million labelled photos to recognise <b>1,000 kinds of thing</b>, including five breeds of pet cat, eight wild cats, the American alligator and the Nile crocodile.</p>
+          <p>Nobody programmed it to look for whiskers or scales. During training it was shown photo after photo and nudged its weights, bit by bit, whenever it got an answer wrong. The detectors you see are what it ended up with.</p>
+          <h3>What's a detector?</h3>
+          <p>Each layer contains dozens to hundreds of detectors (also called <i>channels</i> or <i>feature maps</i>). A detector slides a small pattern-matcher over the grid from the layer before and lights up wherever it finds its pattern. Its output is another grid of numbers, shown here as brightness.</p>
+          <p>Each layer's grid is <b>half the width of the one before</b> (112 → 56 → 28 → 14 → 7). The grid squares get bigger and the detectors more numerous, so each square "sees" a bigger part of the photo and knows about more complicated things.</p>
+        </section>
+        <section>
+          <h3>How do we know which way a detector voted?</h3>
+          <p>We use calculus. For every detector we ask: <i>"If this detector fired a little bit more, would the answer move towards cat or towards alligator?"</i> That rate of change is called a <b>gradient</b>, and it's computed with <b>backpropagation</b>, the same maths used to train the network. Multiplying it by how strongly the detector is firing gives its vote:
+            <b class="c-cat">orange</b> for cat and <b class="c-gator">teal</b> for alligator.</p>
+          <p>The coloured "evidence" pictures add up every detector's vote at each grid square. In early layers it's a speckly mix, because edges and textures turn up on both animals. By the last layer it usually lights up clearly over the animal. (The technical names are <i>gradient × activation</i> and <i>Grad-CAM</i>.)</p>
+          <h3>Is it really seeing "eyes" and "fur"?</h3>
+          <p>Roughly. Researchers who study these networks have found that early layers respond to edges and colours, middle layers to textures and patterns, and deeper layers to object parts. The labels on each layer are a helpful simplification, though. Real detectors are messier, and many respond to several things at once.</p>
+        </section>
+        <section>
+          <h3>Try to fool it</h3>
+          <ul>
+            <li>A cartoon cat, a cat emoji or a toy cat</li>
+            <li>A lion, tiger or lynx (these count as cats here)</li>
+            <li>A lizard, a snake, a dog or a crocodile-skin pattern</li>
+            <li>Cover half the picture, or hold it upside down</li>
+            <li>Hold it far away, or very close</li>
+          </ul>
+          <h3>Worth knowing</h3>
+          <p>The AI only knows its 1,000 categories, so anything else gets squeezed into the nearest one. It also learns from whatever photos it was trained on, including their quirks and biases. That's why people test AI systems carefully before trusting them.</p>
+          <p class="small dim">Runs entirely in this web browser using TensorFlow.js, and no images leave this computer. Model: EfficientNet-Lite0 (Apache 2.0, Google).</p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="stats" id="stats" hidden></div>
+  <div class="drop-hint" id="drop-hint" hidden>Drop the picture to test it</div>
+</body>
+</html>

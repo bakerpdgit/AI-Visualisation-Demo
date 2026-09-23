@@ -1,0 +1,6 @@
+# Keep Windows batch files with Windows line endings, and treat model weights as binary.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.bin binary
+*.jpg binary

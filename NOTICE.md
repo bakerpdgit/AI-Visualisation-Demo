@@ -17,6 +17,12 @@ tensors were re-ordered to TensorFlow layout, and values were stored as float16 
 ## ImageNet class names (`js/imagenet-classes.js`)
 From `@tensorflow-models/mobilenet`, Copyright Google LLC, Apache License, Version 2.0.
 
+## Sketch classifier (`model/sketch-head.json`)
+A small logistic-regression layer trained by this project. No training images are included. It was trained using:
+- **The Quick, Draw! Dataset** by Google, licensed under CC BY 4.0 (https://github.com/googlecreativelab/quickdraw-dataset). Cat, crocodile and 40 other categories of doodles were used.
+- **ImageNet-Sketch**: H. Wang, S. Ge, E. P. Xing and Z. C. Lipton, *Learning Robust Global Representations by Penalizing Local Predictive Power*, NeurIPS 2019 (https://github.com/HaohanWang/ImageNet-Sketch).
+- Freely licensed drawings of cats and crocodiles from Wikimedia Commons.
+
 ## Sample photos (`samples/`)
 Public domain or CC0 photos from Wikimedia Commons. Full details are in `samples/CREDITS.md`.
 

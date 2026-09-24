@@ -1,5 +1,6 @@
 // Cat or Alligator? Main app: camera -> model -> layer visualisations -> verdict.
-import { EfficientNetLite, CAT_CLASSES, GATOR_CLASSES } from './model.js';
+import { EfficientNetLite, CAT_CLASSES, GATOR_CLASSES, disposeResult } from './model.js';
+import { normaliseSketch, sharpness, captureWarnings, looksLikeADrawing, SketchHead } from './sketch.js';
 import { IMAGENET_CLASSES } from './imagenet-classes.js';
 import { STAGES, TILES_PER_STAGE, TILES_IN_DETAIL } from './stages.js';
 import * as R from './render.js';
@@ -10,7 +11,7 @@ const TAPS = STAGES.map(s => s.tap);
 const INPUT = 224;
 
 // ---------------------------------------------------------------- settings
-const DEFAULTS = { mirror: true, zoom: 0.75, heat: true, mode: 'important', none: 0.12, grad: 'auto', stats: false, camera: '' };
+const DEFAULTS = { mirror: false, zoom: 0.75, heat: true, mode: 'important', none: 0.12, grad: 'auto', stats: false, camera: '', app: 'photo' };
 const settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('cat-or-gator-settings') || '{}')); } catch { /* storage unavailable */ }
 function saveSettings() { try { localStorage.setItem('cat-or-gator-settings', JSON.stringify(settings)); } catch { /* ignore */ } }
@@ -34,6 +35,10 @@ const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true });
 
 const probsEma = new Float32Array(1000);
 let probsInit = false;
+let sketchHead = null;                     // small classifier trained on sketches (sketch mode)
+const sketchEma = new Float32Array(3);     // smoothed sketch probabilities: cat, alligator, other
+let sketchInit = false;
+const isSketch = () => settings.app === 'sketch' && !!sketchHead;
 const stages = [];            // per-stage runtime state + DOM
 let detail = { open: false, stage: -1, sel: [], spot: -1, els: [] };
 
@@ -138,7 +143,7 @@ function buildPipeline() {
 }
 
 function resetSmoothing() {
-  probsInit = false;
+  probsInit = false; sketchInit = false;
   for (const s of stages) { s.init = false; s.hasVote = false; }
 }
 
@@ -190,9 +195,9 @@ function showCamMessage(text, withPhotoButton = false) {
   if (!text) { m.hidden = true; return; }
   m.hidden = false;
   m.innerHTML = `<div><p>${text}</p>${withPhotoButton ? '<button class="btn primary" id="msg-photo">Use a photo</button>' : ''}</div>`;
-  $('#msg-photo', m)?.addEventListener('click', () => $('#dlg-photo').showModal());
+  $('#msg-photo', m)?.addEventListener('click', () => { renderSamples(); $('#dlg-photo').showModal(); });
 }
-function applyMirror() { video.classList.toggle('mirror', settings.mirror); }
+function applyMirror() { video.classList.toggle('mirror', settings.mirror && !isSketch()); }
 
 async function loadPhoto(src) {
   still.src = src;
@@ -214,8 +219,8 @@ async function backToCamera() {
   if (!stream) await startCamera();
 }
 
-// Copy the part of the picture inside the box into the 224x224 model input.
-function grabFrame() {
+// Copy the part of the picture inside the box into a 224x224 canvas.
+function grabRaw(ctx) {
   let src, sw, sh, zoom;
   if (source === 'camera') {
     if (!stream || video.readyState < 2 || !video.videoWidth) return false;
@@ -224,11 +229,27 @@ function grabFrame() {
     if (!still.naturalWidth) return false;
     src = still; sw = still.naturalWidth; sh = still.naturalHeight; zoom = 1;
   }
-  const s = Math.min(sw, sh) * zoom;
-  inputCtx.save();
-  if (source === 'camera' && settings.mirror) { inputCtx.translate(INPUT, 0); inputCtx.scale(-1, 1); }
-  inputCtx.drawImage(src, (sw - s) / 2, (sh - s) / 2, s, s, 0, 0, INPUT, INPUT);
-  inputCtx.restore();
+  ctx.save();
+  if (source === 'photo' && isSketch()) {
+    // uploaded drawings: fit the whole picture in (don't crop off a long alligator's tail)
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, INPUT, INPUT);
+    const r = INPUT / Math.max(sw, sh), w = sw * r, h = sh * r;
+    ctx.drawImage(src, (INPUT - w) / 2, (INPUT - h) / 2, w, h);
+  } else {
+    const s = Math.min(sw, sh) * zoom;
+    if (source === 'camera' && settings.mirror && !isSketch()) { ctx.translate(INPUT, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(src, (sw - s) / 2, (sh - s) / 2, s, s, 0, 0, INPUT, INPUT);
+  }
+  ctx.restore();
+  return true;
+}
+// The model's input: in sketch mode the pencil drawing is also cleaned up.
+let cropRect = null;      // sketch mode: the part of the box the drawing was zoomed from (224 units)
+let sketchStats = null;   // sketch mode: clean-up stats of the current frame
+function grabFrame() {
+  if (!grabRaw(inputCtx)) return false;
+  sketchStats = isSketch() ? normaliseSketch(inputCanvas) : null;
+  cropRect = sketchStats ? sketchStats.rect : null;
   return true;
 }
 
@@ -254,16 +275,22 @@ async function step() {
   const live = source === 'camera' && !frozen;
   const doGrad = decideGrad();
 
+  const sketch = isSketch();
+  const extra = sketch ? sketchHead.features : [];
+  // In sketch mode the detectors' votes are measured against the sketch classifier's
+  // own cat-vs-alligator score rather than the photo classifier's.
+  const scoreFn = sketch ? (lg, store) => { const l = sketchHead.logits(store); return l.gather([0]).sub(l.gather([1])).squeeze(); } : null;
   const x = model.preprocess(inputCanvas);
   let r;
   try {
-    r = doGrad ? model.analyse(x, TAPS) : model.activations(x, TAPS);
+    r = doGrad ? model.analyse(x, TAPS, { extra, scoreFn }) : model.activations(x, TAPS, extra);
   } finally { x.dispose(); }
 
   try {
     // --- 1. small summary numbers
     const statT = tf.tidy(() => {
       const o = { probs: tf.softmax(r.logits.squeeze([0])), means: r.acts.map(a => a.mean([0, 1, 2])) };
+      if (sketch) o.sketch = tf.softmax(sketchHead.logits(r.store));
       if (doGrad) {
         const ga = r.acts.map((a, i) => a.mul(r.grads[i]));        // gradient x activation
         o.votes = ga.map(t => t.sum([0, 1, 2]));                     // one vote per detector
@@ -274,6 +301,12 @@ async function step() {
     const list = [statT.probs, ...statT.means, ...(statT.votes || []), ...(statT.evid || [])];
     const data = await Promise.all(list.map(t => t.data()));
     list.forEach(t => t.dispose());
+    if (statT.sketch) {
+      const sp = await statT.sketch.data(); statT.sketch.dispose();
+      const as = live && sketchInit ? 0.45 : 1;
+      for (let i = 0; i < 3; i++) sketchEma[i] += as * (sp[i] - sketchEma[i]);
+      sketchInit = true;
+    }
     const probs = data[0];
     const means = data.slice(1, 1 + TAPS.length);
     const votes = doGrad ? data.slice(1 + TAPS.length, 1 + 2 * TAPS.length) : null;
@@ -336,17 +369,19 @@ async function step() {
     if (doGrad) timing.analyse = timing.analyse ? timing.analyse * 0.8 + ms * 0.2 : ms;
     else timing.forward = timing.forward ? timing.forward * 0.8 + ms * 0.2 : ms;
   } finally {
-    [r.logits, r.score, ...r.acts, ...(r.grads || [])].forEach(t => t && t.dispose());
+    disposeResult(r);
   }
   return true;
 }
 
 // ---------------------------------------------------------------- drawing
 function render(maps, want, live) {
-  const pc = CAT_CLASSES.reduce((s, i) => s + probsEma[i], 0);
-  const pg = GATOR_CLASSES.reduce((s, i) => s + probsEma[i], 0);
+  const sketch = isSketch();
+  const pc = sketch ? sketchEma[0] : CAT_CLASSES.reduce((s, i) => s + probsEma[i], 0);
+  const pg = sketch ? sketchEma[1] : GATOR_CLASSES.reduce((s, i) => s + probsEma[i], 0);
   const both = pc + pg;
-  const neither = both < settings.none;
+  const noDrawing = sketch && sketchStats && !looksLikeADrawing(sketchStats);
+  const neither = sketch ? noDrawing || sketchEma[2] > Math.max(pc, pg) : both < settings.none;
 
   stages.forEach((s, i) => {
     const plane = s.H * s.W;
@@ -397,7 +432,14 @@ function render(maps, want, live) {
   const top = argsortDesc(probsEma).slice(0, 5);
   const v = $('#verdict');
   let kind, word, sub;
-  if (neither) {
+  if (sketch) {
+    const share = both > 1e-6 ? pc / both : 0.5;
+    if (noDrawing) { kind = 'none'; word = 'Not sure'; sub = 'Hold up your drawing so it fills most of the box.'; }
+    else if (neither) { kind = 'none'; word = 'Not sure'; sub = 'I can\'t see a cat or an alligator drawing yet.'; }
+    else if (share > 0.65) { kind = 'cat'; word = 'CAT'; sub = 'Live guess. Press "Score my drawing" when you\'re ready.'; }
+    else if (share < 0.35) { kind = 'gator'; word = 'ALLIGATOR'; sub = 'Live guess. Press "Score my drawing" when you\'re ready.'; }
+    else { kind = 'unsure'; word = 'Hmm…'; sub = 'It could be either!'; }
+  } else if (neither) {
     kind = 'none'; word = 'Not sure';
     sub = `I don't think that's a cat or an alligator. Maybe: ${className(top[0]).toLowerCase()}?`;
   } else {
@@ -418,7 +460,7 @@ function render(maps, want, live) {
   $('#pct-cat').textContent = pct(pc);
   $('#pct-gator').textContent = pct(pg);
   $('#pct-other').textContent = pct(other);
-  $('#top5').innerHTML = top.map(i => {
+  if (!sketch) $('#top5').innerHTML = top.map(i => {
     const cls = CAT_SET.has(i) ? 'cat' : GATOR_SET.has(i) ? 'gator' : '';
     return `<li class="${cls}"><span class="name">${className(i)}</span><span class="p">${pct(probsEma[i])}</span><span class="bar"><i style="width:${(100 * probsEma[i]).toFixed(1)}%"></i></span></li>`;
   }).join('');
@@ -454,7 +496,13 @@ function drawOverlay(heatStrength = 1) {
   const last = stages[stages.length - 1];
   if (settings.heat && last?.hasVote && last.evMax > 0) {
     ctx.save(); ctx.globalAlpha = heatStrength;
-    R.drawCameraHeat(ctx, last.evidence, last.W, last.H, 1 / last.evMax, box);
+    let hb = box;
+    if (isSketch() && cropRect) {   // the AI zoomed in on the drawing, so put the heat map there
+      const k = box.s / INPUT;
+      hb = { x: box.x + cropRect.x * k, y: box.y + cropRect.y * k, s: cropRect.s * k };
+      ctx.beginPath(); ctx.rect(box.x, box.y, box.s, box.s); ctx.clip();
+    }
+    R.drawCameraHeat(ctx, last.evidence, last.W, last.H, 1 / last.evMax, hb);
     ctx.restore();
   }
   // corner brackets
@@ -568,6 +616,185 @@ function updateStats() {
     `gpu MB    ${((mem.numBytesInGPU || 0) / 1e6).toFixed(0)}`;
 }
 
+// ---------------------------------------------------------------- sketch mode
+function setAppMode(mode) {
+  if (mode === 'sketch' && !sketchHead) mode = 'photo';
+  settings.app = mode; saveSettings();
+  const sk = mode === 'sketch';
+  document.body.classList.toggle('sketch-mode', sk);
+  document.querySelectorAll('#seg-app button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.app === mode)));
+  $('#h-camera-text').textContent = sk ? 'Your drawing' : 'What it sees';
+  $('#lbl-other').textContent = sk ? 'Neither' : 'Something else';
+  frozen = false; updateFreezeUi();
+  applyMirror();
+  resetSmoothing(); sketchInit = false;
+  stages.forEach(st => { st.sel = []; });
+  if (sk) renderBoards();
+}
+
+const esc = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const withArticle = (a) => (a === 'alligator' ? 'an ' : 'a ') + a;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let capture = null;
+
+// "Score my drawing": take ~10 frames over a second, keep the sharpest, and ask the student to check it.
+async function captureDrawing() {
+  if (!isSketch() || !model || capture?.busy || document.querySelector('dialog[open]')) return;
+  capture = { busy: true };
+  let best = null;
+  const n = source === 'camera' ? 10 : 1;
+  if (source === 'camera') $('#hold-badge').hidden = false;
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('canvas'); c.width = c.height = INPUT;
+    if (grabRaw(c.getContext('2d', { willReadFrequently: true }))) {
+      const sh = sharpness(c);
+      if (!best || sh > best.sharp) best = { raw: c, sharp: sh };
+    }
+    if (n > 1) await sleep(90);
+  }
+  $('#hold-badge').hidden = true;
+  if (!best) { capture = null; return; }
+  const clean = document.createElement('canvas'); clean.width = clean.height = INPUT;
+  clean.getContext('2d').drawImage(best.raw, 0, 0);
+  const stats = normaliseSketch(clean);
+  capture = { ...best, clean, stats, busy: false };
+  // freeze the main screen on the captured drawing
+  inputCtx.drawImage(clean, 0, 0);
+  cropRect = stats.rect; sketchStats = stats;
+  frozen = true; updateFreezeUi(); resetSmoothing(); sketchInit = false;
+  // fill in the "Is this your drawing?" step
+  for (const [id, c] of [['#cap-raw', best.raw], ['#cap-clean', clean]]) {
+    const el = $(id); el.width = el.height = INPUT; el.getContext('2d').drawImage(c, 0, 0);
+  }
+  const warns = captureWarnings(stats, best.sharp);
+  $('#cap-warn').innerHTML = warns.length ? warns.map(w => `<li>${esc(w)}</li>`).join('') : '<li class="ok">Looks good!</li>';
+  // no paper / no drawing: only allow "try again"
+  const usable = looksLikeADrawing(stats);
+  document.querySelectorAll('#cap-confirm [data-animal]').forEach(b => { b.disabled = !usable; });
+  $('#cap-ask').textContent = usable ? 'Happy with it? Tell the AI what you drew:' : 'Let\'s try that again.';
+  $('#cap-confirm').hidden = false; $('#cap-result').hidden = true;
+  $('#dlg-capture').showModal();
+  $('#cap-retry').focus();
+}
+
+async function scoreCapture(animal) {
+  if (!capture?.clean || !looksLikeADrawing(capture.stats)) return;
+  const x = model.preprocess(capture.clean);
+  const r = model.activations(x, [], sketchHead.features);
+  x.dispose();
+  const lt = tf.tidy(() => sketchHead.logits(r.store));
+  const logits = Array.from(await lt.data());
+  lt.dispose(); disposeResult(r);
+  const res = sketchHead.score(logits, animal);
+  const probs = sketchHead.probs(logits);
+  const score = Math.round(res.score * 10) / 10;
+  capture.result = { animal, score, probs, percentile: res.percentile };
+  // show the result step
+  $('#cap-confirm').hidden = true; $('#cap-result').hidden = false;
+  $('#cap-result').dataset.animal = animal;
+  $('#score-animal').textContent = animal === 'cat' ? 'Cat' : 'Alligator';
+  const other = animal === 'cat' ? 'alligator' : 'cat';
+  const tips = animal === 'cat' ? 'fur, whiskers and pointy ears' : 'scales, teeth and a long snout';
+  const pOther = probs[animal === 'cat' ? 1 : 0], pNone = probs[2];
+  $('#score-msg').textContent =
+    score >= 95 ? `Incredible! The AI is completely convinced that's ${withArticle(animal)}.`
+    : score >= 85 ? `Brilliant! That's a very convincing ${animal}.`
+    : score >= 70 ? `Great drawing! The AI is pretty sure it's ${withArticle(animal)}.`
+    : score >= 50 ? `Not bad. The AI thinks it's ${withArticle(animal)}, but it isn't certain. Try adding more ${tips}.`
+    : pOther > pNone ? `Oh no! The AI thought it looked more like ${withArticle(other)}. Try adding more ${tips}.`
+    : `Hmm, the AI couldn't really tell what it was. Try adding more ${tips}.`;
+  $('#score-probs').innerHTML = `Behind the scenes the AI said: <b class="c-cat">cat ${pct(probs[0])}</b> · <b class="c-gator">alligator ${pct(probs[1])}</b> · neither ${pct(probs[2])}. ` +
+    'The score stretches out the top end, so every extra point near 100 is harder to get.';
+  $('#score-pctl').textContent = res.percentile == null ? '' :
+    `That's better than ${Math.round(res.percentile)}% of the ${animal} sketches the AI learned from.`;
+  const board = loadBoard().filter(e => e.animal === animal);
+  const rank = 1 + board.filter(e => e.score > score).length;
+  $('#score-rank').textContent = rank <= 10 && score >= 50 ? `That would put you #${rank} on the ${animal} leaderboard!` : '';
+  $('#save-name').value = '';
+  $('#save-form').hidden = score < 1;
+  // count-up animation (stretched at the top so it's exciting)
+  const el = $('#score-big'); const t0 = performance.now(); const dur = 1400;
+  const tick = (now) => {
+    const u = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - u, 3);
+    el.textContent = (score * e).toFixed(1);
+    if (u < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  setTimeout(() => $('#save-name').focus(), 50);
+}
+
+function finishCapture() {
+  capture = null;
+  if ($('#dlg-capture').open) $('#dlg-capture').close();
+  if (source === 'camera') { frozen = false; updateFreezeUi(); }
+  resetSmoothing(); sketchInit = false;
+}
+
+// ---- leaderboard (kept in this browser only)
+const LB_KEY = 'cat-or-gator-leaderboard';
+function loadBoard() { try { return JSON.parse(localStorage.getItem(LB_KEY) || '[]'); } catch { return []; } }
+function storeBoard(b) {
+  try { localStorage.setItem(LB_KEY, JSON.stringify(b)); return true; }
+  catch { return false; }
+}
+function addToBoard(name) {
+  if (!capture?.result) return;
+  const th = document.createElement('canvas'); th.width = th.height = 96;
+  th.getContext('2d').drawImage(capture.clean, 0, 0, 96, 96);
+  const entry = { id: Date.now().toString(36), name: name.trim().slice(0, 20) || 'Anonymous', animal: capture.result.animal, score: capture.result.score, t: new Date().toISOString(), thumb: th.toDataURL('image/jpeg', 0.7) };
+  let b = loadBoard(); b.push(entry);
+  // keep the best 150 of each animal so storage never fills up
+  const keep = (a) => b.filter(e => e.animal === a).sort((p, q) => q.score - p.score).slice(0, 150);
+  b = [...keep('cat'), ...keep('alligator')];
+  if (!storeBoard(b)) { b = b.map(e => ({ ...e, thumb: undefined })); storeBoard(b); }
+  renderBoards(entry.id);
+}
+function boardHtml(list, n, fresh, big = false) {
+  if (!list.length) return '<li class="empty">No scores yet. Be the first!</li>';
+  return list.slice(0, n).map((e, i) => `<li class="${e.id === fresh ? 'fresh' : ''}"><span class="rank">${i + 1}</span>` +
+    (e.thumb ? `<img src="${e.thumb}" alt="" width="${big ? 56 : 30}" height="${big ? 56 : 30}">` : '<i class="nothumb"></i>') +
+    `<span class="who">${esc(e.name)}</span><b class="pts">${e.score.toFixed(1)}</b>` +
+    (big ? `<button class="btn icon small del" data-id="${e.id}" title="Remove this score" aria-label="Remove ${esc(e.name)}'s score">✕</button>` : '') + '</li>').join('');
+}
+function renderBoards(fresh) {
+  const b = loadBoard();
+  const byScore = (a) => b.filter(e => e.animal === a).sort((p, q) => q.score - p.score);
+  $('#board-cat ol').innerHTML = boardHtml(byScore('cat'), 5, fresh);
+  $('#board-gator ol').innerHTML = boardHtml(byScore('alligator'), 5, fresh);
+  $('#lb-cat').innerHTML = boardHtml(byScore('cat'), 30, fresh, true);
+  $('#lb-gator').innerHTML = boardHtml(byScore('alligator'), 30, fresh, true);
+  $('#lb-count').textContent = `${b.length} score${b.length === 1 ? '' : 's'} saved on this computer.`;
+}
+function exportBoard() {
+  const rows = [['name', 'animal', 'score', 'time'], ...loadBoard().sort((p, q) => q.score - p.score).map(e => [e.name, e.animal, e.score.toFixed(1), e.t])];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `cat-or-alligator-scores-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function wireSketchUi() {
+  document.querySelectorAll('#seg-app button').forEach(b => b.addEventListener('click', () => setAppMode(b.dataset.app)));
+  $('#btn-score').addEventListener('click', captureDrawing);
+  document.querySelectorAll('#cap-confirm [data-animal]').forEach(b => b.addEventListener('click', () => scoreCapture(b.dataset.animal)));
+  $('#cap-retry').addEventListener('click', finishCapture);
+  $('#cap-done').addEventListener('click', finishCapture);
+  $('#dlg-capture').addEventListener('cancel', (e) => { e.preventDefault(); finishCapture(); });
+  $('#save-form').addEventListener('submit', (e) => { e.preventDefault(); addToBoard($('#save-name').value); finishCapture(); });
+  $('#btn-board').addEventListener('click', () => { renderBoards(); $('#dlg-board').showModal(); });
+  $('#lb-export').addEventListener('click', exportBoard);
+  $('#dlg-board').addEventListener('click', (e) => {
+    const del = e.target.closest('.del'); if (!del) return;
+    storeBoard(loadBoard().filter(x => x.id !== del.dataset.id)); renderBoards();
+  });
+  const clear = $('#lb-clear');
+  clear.addEventListener('click', () => {
+    if (clear.dataset.armed) { storeBoard([]); renderBoards(); delete clear.dataset.armed; clear.textContent = 'Clear all scores'; }
+    else { clear.dataset.armed = '1'; clear.textContent = 'Click again to delete every score'; setTimeout(() => { delete clear.dataset.armed; clear.textContent = 'Clear all scores'; }, 4000); }
+  });
+}
+
 // ---------------------------------------------------------------- UI wiring
 function updateFreezeUi() {
   const b = $('#btn-freeze');
@@ -595,7 +822,7 @@ function wireUi() {
   $('#btn-freeze').addEventListener('click', toggleFreeze);
   $('#btn-full').addEventListener('click', toggleFullscreen);
   $('#btn-info').addEventListener('click', () => $('#dlg-info').showModal());
-  $('#btn-photo').addEventListener('click', () => $('#dlg-photo').showModal());
+  $('#btn-photo').addEventListener('click', () => { renderSamples(); $('#dlg-photo').showModal(); });
   $('#btn-settings').addEventListener('click', () => { listCameras(); $('#dlg-settings').showModal(); });
   $('#btn-back-camera').addEventListener('click', backToCamera);
   $('#btn-photo-camera').addEventListener('click', () => { $('#dlg-photo').close(); backToCamera(); });
@@ -648,27 +875,38 @@ function wireUi() {
     if (e.target.closest?.('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     const anyDialog = document.querySelector('dialog[open]');
     const k = e.key.toLowerCase();
+    if (anyDialog?.id === 'dlg-capture' && !$('#cap-confirm').hidden) {
+      if (k === 'c') scoreCapture('cat'); else if (k === 'a') scoreCapture('alligator'); else if (k === 'r') finishCapture();
+      return;
+    }
     if (k === ' ' && !anyDialog) { e.preventDefault(); toggleFreeze(); }
     else if (k === 'f') toggleFullscreen();
     else if (anyDialog) return;
     else if (k === 'h') { heat.checked = !heat.checked; heat.dispatchEvent(new Event('change')); }
     else if (k === 'm') { mirror.checked = !mirror.checked; mirror.dispatchEvent(new Event('change')); }
-    else if (k === 'p') $('#dlg-photo').showModal();
+    else if (k === 'p') { renderSamples(); $('#dlg-photo').showModal(); }
     else if (k === 'i') $('#dlg-info').showModal();
     else if (k === 's') { listCameras(); $('#dlg-settings').showModal(); }
     else if (k === 'd') { stats.checked = !stats.checked; stats.dispatchEvent(new Event('change')); }
+    else if (k === 'enter' && isSketch()) { e.preventDefault(); captureDrawing(); }
+    else if (k === 'k' && sketchHead) setAppMode(isSketch() ? 'photo' : 'sketch');
     else if (k >= '1' && k <= String(STAGES.length)) openDetail(+k - 1, -1);
   });
   window.addEventListener('resize', () => drawOverlay());
 }
 
+let sampleList = [];
 async function loadSamples() {
-  try {
-    const list = await (await fetch('samples/samples.json')).json();
-    const box = $('#samples');
-    box.innerHTML = list.map((s, i) => `<button data-i="${i}" title="${s.label}"><img src="samples/${s.file}" alt="${s.label}" loading="lazy"></button>`).join('');
-    box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => loadPhoto('samples/' + list[+b.dataset.i].file)));
-  } catch { $('#samples').hidden = true; }
+  try { sampleList = await (await fetch('samples/samples.json')).json(); } catch { sampleList = []; }
+  renderSamples();
+}
+function renderSamples() {
+  const box = $('#samples');
+  const mode = isSketch() ? 'sketch' : 'photo';
+  const list = sampleList.filter(s => (s.mode || 'photo') === mode);
+  box.hidden = !list.length;
+  box.innerHTML = list.map((s, i) => `<button data-i="${i}" title="${esc(s.label)}"><img src="samples/${s.file}" alt="${esc(s.label)}" loading="lazy"></button>`).join('');
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => loadPhoto('samples/' + list[+b.dataset.i].file)));
 }
 
 // ---------------------------------------------------------------- start-up
@@ -701,9 +939,13 @@ async function main() {
   setLoading('Warming up…', 0.95);
   // First run compiles the GPU programs, so do it behind the loading screen.
   await new Promise(r => setTimeout(r, 30));
-  tf.tidy(() => { const r = model.analyse(tf.zeros([1, INPUT, INPUT, 3]), TAPS); [r.logits, r.score, ...r.acts, ...r.grads].forEach(t => t.dispose()); });
+  tf.tidy(() => disposeResult(model.analyse(tf.zeros([1, INPUT, INPUT, 3]), TAPS)));
+  try { sketchHead = await SketchHead.load('model/sketch-head.json'); }
+  catch (err) { console.warn('Sketch mode unavailable:', err); $('#seg-app').hidden = true; }
   buildPipeline();
   wireUi();
+  wireSketchUi();
+  setAppMode(settings.app);
   setLoading('Starting the camera…', 1);
   await startCamera();
   $('#loading').hidden = true;

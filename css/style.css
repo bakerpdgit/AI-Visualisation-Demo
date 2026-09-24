@@ -206,6 +206,53 @@ code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
 .top5 .bar i { display: block; height: 100%; background: var(--other); }
 .top5 li.cat .bar i { background: var(--cat); } .top5 li.gator .bar i { background: var(--gator); }
 
+/* ---------- Sketch mode ---------- */
+body:not(.sketch-mode) .sketch-only, body.sketch-mode .photo-only { display: none !important; }
+.app-seg { margin-right: 6px; }
+.app-seg button { font-size: 15px; padding: 6px 14px; }
+.app-seg button[aria-checked="true"] { background: #3a2a0c; color: #ffd9a6; }
+.cam-badge.hold { border-color: var(--cat); color: #ffe2b8; font-size: 18px; padding: 8px 18px; top: 40%; }
+.btn.big { font-size: clamp(16px, 1.2vw, 20px); padding: 12px 18px; justify-content: center; font-weight: 650; }
+.btn.big svg { width: 24px; height: 24px; fill: currentColor; }
+.score-box { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.score-box #btn-score { width: 100%; }
+.boards { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.board h4 { margin: 0 0 4px; font-size: 14px; }
+.board ol, .lb { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.board li, .lb li { display: grid; grid-template-columns: 18px auto 1fr auto; align-items: center; gap: 8px; font-size: 14px; }
+.board li img, .lb li img, .nothumb { border-radius: 4px; background: #fff; display: block; }
+.nothumb { width: 30px; height: 30px; }
+.board .rank, .lb .rank { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+.board .who, .lb .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board .pts, .lb .pts { font-variant-numeric: tabular-nums; }
+.board li.empty, .lb li.empty { display: block; color: var(--faint); font-size: 13px; }
+.board li.fresh, .lb li.fresh { background: #2a2f55; border-radius: 6px; }
+.lb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 10px 0 14px; }
+.lb li { font-size: 17px; grid-template-columns: 28px 56px 1fr auto auto; }
+.lb .del { padding: 2px 7px; font-size: 12px; opacity: .5; }
+.lb .del:hover { opacity: 1; }
+.lb h3 { margin: 0 0 8px; }
+dialog.capture { width: min(760px, calc(100vw - 32px)); text-align: center; }
+.cap-images { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0 6px; }
+.cap-images figure { margin: 0; }
+.cap-images canvas { width: 100%; aspect-ratio: 1; border-radius: 10px; background: #fff; display: block; }
+.cap-images figcaption { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.cap-warn { list-style: none; padding: 0; margin: 8px 0; color: #ffd28a; font-size: 15px; }
+.cap-warn li.ok { color: #9ff3dd; }
+.cap-ask { margin: 10px 0 8px; font-size: 16px; }
+.cap-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.cap-actions .btn:disabled { opacity: .35; cursor: not-allowed; }
+.pick-cat { background: #3a2a0c; border-color: var(--cat); color: #ffd9a6; }
+.pick-gator { background: #0c3a33; border-color: var(--gator); color: #b6fff1; }
+.score-big { font-size: clamp(64px, 9vw, 120px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; margin: 6px 0 10px; }
+#cap-result[data-animal="cat"] .score-big { color: var(--cat); }
+#cap-result[data-animal="alligator"] .score-big { color: var(--gator); }
+.score-msg { font-size: 18px; margin: 4px 0; }
+.score-rank { font-size: 17px; font-weight: 650; color: #e6e1ff; min-height: 1em; }
+.save-form { display: flex; gap: 10px; align-items: flex-end; justify-content: center; flex-wrap: wrap; margin: 12px 0; }
+.save-form label { display: flex; flex-direction: column; gap: 4px; text-align: left; font-size: 14px; color: var(--muted); }
+.save-form input { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 18px; width: 240px; }
+
 /* ---------- Footer ---------- */
 .explainer { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); padding: 10px 16px 12px; }
 .idea { display: flex; gap: 12px; align-items: flex-start; background: #0d1320; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
@@ -273,7 +320,7 @@ dialog h2 { margin: 0 0 8px; }
 /* ---------- Smaller screens ---------- */
 @media (max-height: 900px) {
   .blurb { display: none; }
-  .howto ol { display: none; }
+  .howto.photo-only ol { display: none; }
   .idea p { font-size: 13.5px; }
   .idea { padding: 8px 12px; }
 }

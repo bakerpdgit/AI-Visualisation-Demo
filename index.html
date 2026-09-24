@@ -17,6 +17,10 @@
       <p>Watch an AI make up its mind, layer by layer</p>
     </div>
     <nav class="controls" aria-label="Controls">
+      <div class="seg app-seg" role="radiogroup" aria-label="What to show the AI" id="seg-app" title="Switch between photos and sketches (K)">
+        <button role="radio" data-app="photo" aria-checked="true">Photos</button>
+        <button role="radio" data-app="sketch" aria-checked="false">Sketches</button>
+      </div>
       <button id="btn-freeze" class="btn" title="Freeze the picture (Space)"><span class="kbd">Space</span> <span class="lbl">Freeze</span></button>
       <button id="btn-photo" class="btn" title="Use a photo instead of the camera (P)">Use a photo</button>
       <button id="btn-info" class="btn" title="How it works (I)">How it works</button>
@@ -32,21 +36,32 @@
   <main class="layout">
     <!-- 1. Camera -->
     <section class="panel camera-panel" aria-labelledby="h-camera">
-      <h2 id="h-camera"><span class="step">1</span> What it sees</h2>
+      <h2 id="h-camera"><span class="step">1</span> <span id="h-camera-text">What it sees</span></h2>
       <div class="cam-view" id="cam-view">
         <video id="video" playsinline muted></video>
         <img id="still" alt="" hidden>
         <canvas id="cam-overlay"></canvas>
         <div class="cam-badge" id="frozen-badge" hidden>Frozen. Press Space to carry on.</div>
-        <div class="cam-prompt" id="cam-prompt" hidden>Hold up a picture of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b>!</div>
+        <div class="cam-badge hold" id="hold-badge" hidden>Hold still…</div>
+        <div class="cam-prompt" id="cam-prompt" hidden><span class="photo-only">Hold up a picture of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b>!</span><span class="sketch-only">Hold up your drawing of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b>!</span></div>
         <div class="cam-message" id="cam-message" hidden></div>
       </div>
-      <p class="note">The AI only looks <b>inside the box</b>, shrunk down to 224 × 224 pixels.</p>
+      <p class="note photo-only">The AI only looks <b>inside the box</b>, shrunk down to 224 × 224 pixels.</p>
+      <p class="note sketch-only">Hold your drawing <b>inside the box</b>. The AI sees a cleaned-up black-and-white version (shown in the layers).</p>
       <label class="switch"><input type="checkbox" id="chk-heat" checked> <span>Show where it found evidence</span></label>
       <div class="photo-bar" id="photo-bar" hidden>
         <button class="btn small" id="btn-back-camera">Back to the camera</button>
       </div>
-      <div class="howto">
+      <div class="howto sketch-only">
+        <h3>Sketch challenge</h3>
+        <ol>
+          <li>Draw a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b> in pencil on plain white paper, with no background.</li>
+          <li>Sketch in the <b>fur</b> or the <b>scales</b>. Detail helps!</li>
+          <li>Hold it inside the box and press <b>Score my drawing</b>.</li>
+        </ol>
+        <p>The highest scores go on the leaderboard.</p>
+      </div>
+      <div class="howto photo-only">
         <h3>How to play</h3>
         <ol>
           <li>Hold a picture of a <b class="c-cat">cat</b> or an <b class="c-gator">alligator</b> inside the box.</li>
@@ -87,7 +102,7 @@
         <div class="split-labels">
           <span><i class="sw cat"></i> Cat <b id="pct-cat">0%</b></span>
           <span><i class="sw gator"></i> Alligator <b id="pct-gator">0%</b></span>
-          <span><i class="sw other"></i> Something else <b id="pct-other">0%</b></span>
+          <span><i class="sw other"></i> <span id="lbl-other">Something else</span> <b id="pct-other">0%</b></span>
         </div>
       </div>
       <h3 class="sub-h">How the votes built up, layer by layer</h3>
@@ -95,8 +110,20 @@
         <div class="bu-axis"><span class="c-cat">cat</span><span class="c-gator">alligator</span></div>
         <div class="buildup" id="buildup" aria-label="Vote balance at each layer"></div>
       </div>
-      <h3 class="sub-h">Its top guesses <span class="dim">(out of 1,000 things it knows)</span></h3>
-      <ol class="top5" id="top5"></ol>
+      <div class="photo-only">
+        <h3 class="sub-h">Its top guesses <span class="dim">(out of 1,000 things it knows)</span></h3>
+        <ol class="top5" id="top5"></ol>
+      </div>
+      <div class="sketch-only score-box">
+        <button class="btn primary big" id="btn-score" title="Score my drawing (Enter)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9Zm3 5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>
+          Score my drawing</button>
+        <div class="boards">
+          <div class="board" id="board-cat"><h4 class="c-cat">Top cats</h4><ol></ol></div>
+          <div class="board" id="board-gator"><h4 class="c-gator">Top alligators</h4><ol></ol></div>
+        </div>
+        <button class="btn small" id="btn-board">Full leaderboard</button>
+      </div>
     </section>
   </main>
 
@@ -139,14 +166,14 @@
   <!-- Photo picker -->
   <dialog class="modal" id="dlg-photo">
     <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
-    <h2>Use a photo</h2>
-    <p>Try one of these, choose your own file, or drag a picture onto the page.</p>
+    <h2><span class="photo-only">Use a photo</span><span class="sketch-only">Use a picture of a drawing</span></h2>
+    <p>Try one of these, choose your own file, or drag a picture onto the page.<span class="sketch-only"> For a scanned or photographed drawing, press <b>Score my drawing</b> once it's loaded.</span></p>
     <div class="samples" id="samples"></div>
     <div class="photo-actions">
       <label class="btn primary file-btn">Choose a file… <input type="file" id="file-input" accept="image/*" hidden></label>
       <button class="btn" id="btn-photo-camera">Back to the camera</button>
     </div>
-    <p class="small dim">Sample photos: public domain or CC0, via Wikimedia Commons (see <code>samples/CREDITS.md</code>).</p>
+    <p class="small dim">Samples: public domain, CC0 or CC BY 4.0 (Quick, Draw!). See <code>samples/CREDITS.md</code>.</p>
   </dialog>
 
   <!-- Settings -->
@@ -168,7 +195,7 @@
         </select></label>
       <label class="row"><input type="checkbox" id="set-stats"> Show speed stats (D)</label>
       <div class="row gap"><button class="btn" id="set-reset">Reset settings</button></div>
-      <p class="small dim">Keys: <span class="kbd">Space</span> freeze · <span class="kbd">F</span> full screen · <span class="kbd">H</span> heat map · <span class="kbd">M</span> mirror · <span class="kbd">P</span> photo · <span class="kbd">1</span>–<span class="kbd">5</span> open a layer · <span class="kbd">I</span> info · <span class="kbd">Esc</span> close</p>
+      <p class="small dim">Keys: <span class="kbd">Space</span> freeze · <span class="kbd">F</span> full screen · <span class="kbd">H</span> heat map · <span class="kbd">M</span> mirror · <span class="kbd">P</span> photo · <span class="kbd">K</span> photos/sketches · <span class="kbd">Enter</span> score a sketch · <span class="kbd">1</span>–<span class="kbd">5</span> open a layer · <span class="kbd">I</span> info · <span class="kbd">Esc</span> close</p>
     </div>
   </dialog>
 
@@ -205,10 +232,56 @@
           </ul>
           <h3>Worth knowing</h3>
           <p>The AI only knows its 1,000 categories, so anything else gets squeezed into the nearest one. It also learns from whatever photos it was trained on, including their quirks and biases. That's why people test AI systems carefully before trusting them.</p>
+          <h3>Sketch mode</h3>
+          <p>The photo AI finds pencil drawings hard, because it learned from photos and relies a lot on texture. So sketch mode adds <b>one small extra layer</b> on top of the same network. It was trained on about 3,700 drawings found online: pencil sketches from the <i>ImageNet-Sketch</i> collection, doodles from Google's <i>Quick, Draw!</i> game, and drawings of other things, so it can say "neither".</p>
+          <p>Before the AI sees your drawing, it's cleaned up. The background and your hands are removed, shadows are evened out, and it zooms in on the pencil marks. Your <b>score</b> shows how strongly the AI believes it's the animal you said. It's stretched out at the top, so 95 is much harder to get than 85.</p>
           <p class="small dim">Runs entirely in this web browser using TensorFlow.js, and no images leave this computer. Model: EfficientNet-Lite0 (Apache 2.0, Google).</p>
         </section>
       </div>
     </div>
+  </dialog>
+
+  <!-- Sketch capture: confirm, then score -->
+  <dialog class="modal capture" id="dlg-capture">
+    <div id="cap-confirm">
+      <h2>Is this your drawing?</h2>
+      <div class="cap-images">
+        <figure><canvas id="cap-raw"></canvas><figcaption>What the camera saw (the sharpest frame)</figcaption></figure>
+        <figure><canvas id="cap-clean"></canvas><figcaption>Cleaned up for the AI</figcaption></figure>
+      </div>
+      <ul class="cap-warn" id="cap-warn"></ul>
+      <p class="cap-ask" id="cap-ask">Happy with it? Tell the AI what you drew:</p>
+      <div class="cap-actions">
+        <button class="btn big pick-cat" data-animal="cat">It's a cat <span class="kbd">C</span></button>
+        <button class="btn big pick-gator" data-animal="alligator">It's an alligator <span class="kbd">A</span></button>
+      </div>
+      <button class="btn" id="cap-retry">No, try again <span class="kbd">R</span></button>
+    </div>
+    <div id="cap-result" hidden>
+      <p class="eyebrow"><span id="score-animal">Cat</span> score</p>
+      <div class="score-big" id="score-big">0.0</div>
+      <p class="score-msg" id="score-msg"></p>
+      <p class="small dim" id="score-probs"></p>
+      <p class="small" id="score-pctl"></p>
+      <p class="score-rank" id="score-rank"></p>
+      <form id="save-form" class="save-form" autocomplete="off">
+        <label>First name for the leaderboard <input id="save-name" maxlength="20" required></label>
+        <button class="btn primary">Save my score</button>
+      </form>
+      <button class="btn" id="cap-done">Done (don't save)</button>
+    </div>
+  </dialog>
+
+  <!-- Leaderboard -->
+  <dialog class="modal wide" id="dlg-board">
+    <form method="dialog" class="modal-close"><button class="btn icon" aria-label="Close">✕</button></form>
+    <h2>Sketch leaderboard</h2>
+    <div class="lb-cols">
+      <section><h3 class="c-cat">Top cats</h3><ol class="lb" id="lb-cat"></ol></section>
+      <section><h3 class="c-gator">Top alligators</h3><ol class="lb" id="lb-gator"></ol></section>
+    </div>
+    <p class="small dim"><span id="lb-count"></span> Names and drawings are only stored in this browser.</p>
+    <div class="row gap"><button class="btn" id="lb-export">Download scores (CSV)</button><button class="btn" id="lb-clear">Clear all scores</button></div>
   </dialog>
 
   <div class="stats" id="stats" hidden></div>

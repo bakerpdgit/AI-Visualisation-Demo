@@ -162,26 +162,37 @@ export class EfficientNetLite {
   }
 
   // Full analysis for one image: activations + gradients at the requested taps.
-  // Returns tensors which the caller must dispose: {logits, score, acts[], grads[]}.
-  analyse(x, taps) {
-    const store = Object.fromEntries(taps.map(t => [t, null]));
+  // `extra` lists more layers whose activations are wanted (e.g. for the sketch
+  // classifier), and `scoreFn(logits, store)` can replace the cat-vs-alligator score
+  // that the gradients are taken of. Returns tensors which the caller must dispose:
+  // {logits, score, acts[], grads[], extra{}} (see disposeResult).
+  analyse(x, taps, { extra = [], scoreFn = null } = {}) {
+    const names = [...new Set([...taps, ...extra])];
+    const store = Object.fromEntries(names.map(t => [t, null]));
     let logits = null;
     const zeros = taps.map(t => tf.zeros(this.tapShapes[t]));
     const f = (...e) => {
       const eps = Object.fromEntries(taps.map((t, i) => [t, e[i]]));
       const lg = this.forward(x, { eps, store, keep: true, fused: false });
       logits = tf.keep(lg);
-      return this.score(lg);
+      return scoreFn ? scoreFn(lg, store) : this.score(lg);
     };
     const { value, grads } = tf.valueAndGrads(f)(zeros);
     zeros.forEach(z => z.dispose());
-    return { logits, score: value, acts: taps.map(t => store[t]), grads };
+    return { logits, score: value, acts: taps.map(t => store[t]), grads, extra: Object.fromEntries(extra.filter(t => !taps.includes(t)).map(t => [t, store[t]])), store };
   }
 
   // Forward pass only (cheaper) — used when gradients aren't needed.
-  activations(x, taps) {
-    const store = Object.fromEntries(taps.map(t => [t, null]));
+  activations(x, taps, extra = []) {
+    const names = [...new Set([...taps, ...extra])];
+    const store = Object.fromEntries(names.map(t => [t, null]));
     const logits = tf.tidy(() => tf.keep(this.forward(x, { store, keep: true })));
-    return { logits, acts: taps.map(t => store[t]) };
+    return { logits, acts: taps.map(t => store[t]), extra: Object.fromEntries(extra.filter(t => !taps.includes(t)).map(t => [t, store[t]])), store };
   }
+}
+
+// Free every tensor returned by analyse() / activations().
+export function disposeResult(r) {
+  if (!r) return;
+  [r.logits, r.score, ...(r.acts || []), ...(r.grads || []), ...Object.values(r.extra || {})].forEach(t => t && !t.isDisposed && t.dispose());
 }

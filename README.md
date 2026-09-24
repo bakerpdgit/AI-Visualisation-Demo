@@ -19,6 +19,24 @@ The screen reads left to right:
 
 Click any layer, or press **1**–**5**, to see 40 of its detectors. Click a detector to see exactly where in the picture it fires.
 
+## Sketch mode: the drawing challenge
+
+![Sketch mode](docs/sketch-mode.jpg)
+
+Switch to **Sketches** (top right, or press **K**). Students draw a **cat** or an **alligator** in pencil on plain white paper, sketching in the fur or scales, with no background. They hold it up and press **Score my drawing** (or **Enter**):
+
+1. The app takes about 10 frames over a second and keeps the **sharpest** one. It then asks **"Is this your drawing?"**, showing what the camera saw next to the cleaned-up version the AI will use. It warns if the picture is blurry, too dark or empty.
+2. The student confirms by saying what they drew: **It's a cat** (**C**) or **It's an alligator** (**A**). If they're not happy, they press **No, try again** (**R**).
+3. The AI gives a **score out of 100** with one decimal place. The scale is stretched at the top, so drawings don't all tie at 99. A typical sketch gets about 70, and 90+ is exceptional. It also says how the drawing compares with the sketches the AI learned from.
+   <img src="docs/sketch-score.jpg" alt="A sketch score of 72.0" width="420">
+4. They type a first name to go on the **leaderboard**, which shows the top 5 cats and top 5 alligators with thumbnails of the drawings. **Full leaderboard** shows the top 30 of each. From there you can remove a single entry, **download everything as a CSV**, or clear the board. Scores are saved in the browser, so they survive a page reload, but they only exist on that one computer.
+
+The layers still work in sketch mode. They show the cleaned-up drawing, and the votes come from the sketch classifier.
+
+**How it can read sketches:** the photo AI is poor at pencil drawings, so sketch mode adds one small extra layer. It was trained on about 3,700 drawings found online: ImageNet-Sketch pencil sketches, Google Quick, Draw! doodles, freely licensed drawings and "neither" pages. On held-out real sketches it tells cats from alligators about 93% of the time. The camera image is cleaned up first: the background and hands are removed, shadows are evened out, and it zooms in on the pencil marks. Details and re-training steps are in [`tools/sketch/README.md`](tools/sketch/README.md).
+
+**Tips:** use white paper, a soft pencil (HB–2B) pressed firmly, and a drawing that fills most of the page. Hold it still and square to the camera in good light. Have a pile of paper and pencils at a table next to the screen.
+
 ## Running it
 
 It's a static website: plain HTML and JavaScript using [TensorFlow.js](https://www.tensorflow.org/js). There's no Python, no installing and no server-side code. The AI runs on the computer's graphics card inside the browser, and **no images leave the computer**.
@@ -53,7 +71,7 @@ The first time, the browser will ask for permission to use the camera. Click **A
 - **No camera?** Click **Use a photo** to try the built-in sample photos, choose a file, or drag and drop a picture.
 - **Slow computer?** In **Settings**, set *Explaining speed* to "every other frame" or "every fourth frame". Press **D** to see frames per second.
 
-Keys: `Space` freeze · `F` full screen · `H` heat map on/off · `M` mirror · `P` use a photo · `1`–`5` open a layer · `I` how it works · `S` settings · `D` speed stats · `Esc` close.
+Keys: `Space` freeze · `F` full screen · `H` heat map on/off · `M` mirror · `P` use a photo · `K` photos/sketches · `Enter` score a sketch · `1`–`5` open a layer · `I` how it works · `S` settings · `D` speed stats · `Esc` close.
 
 ### A 60-second explanation for visitors
 
@@ -76,6 +94,9 @@ Keys: `Space` freeze · `F` full screen · `H` heat map on/off · `M` mirror · 
 | `js/model.js` | EfficientNet-Lite0 in TensorFlow.js: forward pass, per-layer gradients |
 | `js/stages.js` | Which 5 layers are shown, and their descriptions (edit the wording here) |
 | `js/render.js` | Colour maps, detector tiles, evidence overlays |
+| `js/sketch.js` | Sketch mode: drawing clean-up, capture checks, the sketch classifier and scoring |
+| `model/sketch-head.json` | The sketch classifier (one extra layer, about 70 KB) |
+| `tools/sketch/` | How the sketch classifier was trained, and scripts to re-train it |
 | `model/` | Converted model weights (`weights.bin`, float16) and architecture (`model.json`) |
 | `vendor/tf.min.js` | TensorFlow.js 4.22.0, bundled so it works offline |
 | `samples/` | Public-domain / CC0 sample photos (see `samples/CREDITS.md`) |
@@ -85,4 +106,4 @@ Keys: `Space` freeze · `F` full screen · `H` heat map on/off · `M` mirror · 
 ## Credits and licences
 
 This project is MIT licensed (see `LICENSE`). Third-party parts are described in [NOTICE.md](NOTICE.md):
-TensorFlow.js (Apache 2.0), EfficientNet-Lite0 weights (Apache 2.0, Google), ImageNet class names (Apache 2.0, from `@tensorflow-models/mobilenet`) and the sample photos (public domain / CC0, via Wikimedia Commons).
+TensorFlow.js (Apache 2.0), EfficientNet-Lite0 weights (Apache 2.0, Google), ImageNet class names (Apache 2.0, from `@tensorflow-models/mobilenet`) and the sample photos (public domain / CC0, via Wikimedia Commons). The sketch classifier was trained using ImageNet-Sketch (Wang et al., 2019) and Google's Quick, Draw! dataset (CC BY 4.0). No images from those datasets are included here.

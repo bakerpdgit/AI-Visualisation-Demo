@@ -1,0 +1,4 @@
+# local-only files from re-training the sketch classifier
+tools/sketch/lite0.onnx
+tools/sketch/data/
+__pycache__/

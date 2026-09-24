@@ -1,34 +1,90 @@
 [
  {
   "file": "cat_28.jpg",
-  "label": "Cat"
+  "label": "Cat",
+  "mode": "photo"
  },
  {
   "file": "gator_08.jpg",
-  "label": "Alligator"
+  "label": "Alligator",
+  "mode": "photo"
  },
  {
   "file": "cat_30.jpg",
-  "label": "Cat"
+  "label": "Cat",
+  "mode": "photo"
  },
  {
   "file": "croc_18.jpg",
-  "label": "Crocodile"
+  "label": "Crocodile",
+  "mode": "photo"
  },
  {
   "file": "cat_21.jpg",
-  "label": "Cat"
+  "label": "Cat",
+  "mode": "photo"
  },
  {
   "file": "gator_13.jpg",
-  "label": "Alligator"
+  "label": "Alligator",
+  "mode": "photo"
  },
  {
   "file": "cat_29.jpg",
-  "label": "Cat"
+  "label": "Cat",
+  "mode": "photo"
  },
  {
   "file": "gator_03.jpg",
-  "label": "Alligator"
+  "label": "Alligator",
+  "mode": "photo"
+ },
+ {
+  "file": "sketch_alligator_psf.jpg",
+  "label": "Alligator (line drawing)",
+  "mode": "sketch",
+  "credit": "Alligator (PSF), Pearson Scott Foresman, public domain, via Wikimedia Commons"
+ },
+ {
+  "file": "sketch_cat_psf.jpg",
+  "label": "Siamese cat (line drawing)",
+  "mode": "sketch",
+  "credit": "Cat (Siamese) (PSF), Pearson Scott Foresman, public domain, via Wikimedia Commons"
+ },
+ {
+  "file": "sketch_cat_pencil.jpg",
+  "label": "Cat (shaded pencil)",
+  "mode": "sketch",
+  "credit": "Pencil effect applied to \"Tabby cat-3337027.jpg\" by pasja1000, CC0"
+ },
+ {
+  "file": "sketch_alligator_pencil.jpg",
+  "label": "Alligator (shaded pencil)",
+  "mode": "sketch",
+  "credit": "Pencil effect applied to \"Everglades Natl Park Alligator.jpg\", NPS / Rodney Cammauf, public domain"
+ },
+ {
+  "file": "sketch_cat_doodle.jpg",
+  "label": "Cat (quick doodle)",
+  "mode": "sketch",
+  "credit": "Quick, Draw! dataset, Google, CC BY 4.0"
+ },
+ {
+  "file": "sketch_crocodile_doodle.jpg",
+  "label": "Crocodile (quick doodle)",
+  "mode": "sketch",
+  "credit": "Quick, Draw! dataset, Google, CC BY 4.0"
+ },
+ {
+  "file": "sketch_dog_doodle.jpg",
+  "label": "Dog (can it tell?)",
+  "mode": "sketch",
+  "credit": "Quick, Draw! dataset, Google, CC BY 4.0"
+ },
+ {
+  "file": "sketch_snake_doodle.jpg",
+  "label": "Snake (can it tell?)",
+  "mode": "sketch",
+  "credit": "Quick, Draw! dataset, Google, CC BY 4.0"
  }
 ]
